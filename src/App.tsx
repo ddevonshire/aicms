@@ -1894,15 +1894,19 @@ async function speakEL(text, voiceId, apiKey?) {
 }
 
 // ── AI ──
-function buildSys(members, visitors, attend, giving, prayers, mem) {
+function buildSys(members, visitors, attend, giving, prayers, mem, prospects:any[] = []) {
+  const addr = (a:any) => a ? [a.street,a.city,a.state,a.zip].filter(Boolean).join(", ") : "";
+  const memberName = (id:any) => { const m = members.find((x:any)=>x.id===id); return m ? m.first+" "+m.last : ""; };
   const aprilGiving = giving.filter(g=>g.date.startsWith("2026-04")).reduce((a,g)=>a+g.amount,0);
   const recentAttend = attend.slice(0,12).map(a=>({date:a.date,service:a.service,count:a.count}));
   const recentGiving = giving.slice(0,20).map(g=>({date:g.date,name:g.name,category:g.category,amount:g.amount,method:g.method}));
   const recentPrayers = prayers.slice(0,15).map(p=>({name:p.name||"",request:p.request||"",status:p.status||""}));
   return "You are "+(window.__CS__?.name||"NTCC")+" AI — an intelligence at IQ 250, combining Elon Musk's first-principles brilliance, Nikola Tesla's inventive genius, and a warm Southern American pastor's heart. You serve "+(window.__CS__?.pastorName||"Pastor Hall")+" of "+(window.__CS__?.name||"New Testament Christian Church")+", "+(window.__CS__?.address||"Glendale AZ")+". Call them "+(window.__CS__?.pastorName||"Pastor Hall")+" or Sir. Speak warmly and naturally.\n\n" +
     "LIVE DATABASE:\n" +
-    "Members(" + members.length + "): " + JSON.stringify(members.slice(0,60).map(m=>({id:m.id,name:m.first+" "+m.last,status:m.status,role:m.role,phone:m.phone,email:m.email}))) + "\n" +
-    "Visitors(" + visitors.length + "): " + JSON.stringify(visitors.slice(0,30).map(v=>({id:v.id,name:v.first+" "+v.last,stage:v.stage,phone:v.phone,firstVisit:v.firstVisit}))) + "\n" +
+    "Members(" + members.length + "): " + JSON.stringify(members.map(m=>({id:m.id,name:m.first+" "+m.last,status:m.status,role:m.role,phone:m.phone,email:m.email}))) + "\n" +
+    "Visitors(" + visitors.length + "): " + JSON.stringify(visitors.map(v=>({id:v.id,name:v.first+" "+v.last,stage:v.stage,phone:v.phone,email:v.email||"",address:addr(v.address),firstVisit:v.firstVisit,sponsor:v.sponsor||"",addedBy:v.addedBy||"",notes:v.notes||""}))) + "\n" +
+    "Prospects / invited contacts(" + prospects.length + "): " + JSON.stringify(prospects.map((p:any)=>({id:p.id,name:p.first+" "+p.last,status:p.status||"",invitedBy:(p.invitedById&&memberName(p.invitedById))||p.invitedBy||"",phone:p.phone||"",email:p.email||"",address:addr(p.address),addedDate:p.addedDate||"",notes:p.notes||""}))) + "\n" +
+    "Note: the invitedBy field on Prospects records who invited that person. Use it (not notes) when asked who someone invited.\n" +
     "Attendance(" + attend.length + " records, recent 12): " + JSON.stringify(recentAttend) + "\n" +
     "April Giving: $" + aprilGiving + " | Recent Giving: " + JSON.stringify(recentGiving) + "\n" +
     "Prayer Requests (recent 15): " + JSON.stringify(recentPrayers) + "\n\n" +
@@ -1914,12 +1918,12 @@ function buildSys(members, visitors, attend, giving, prayers, mem) {
     "Only append [ACTION:...] for clear executable commands. For analysis or conversation respond naturally only.";
 }
 
-async function callAI(messages, members, visitors, attend, giving, prayers, mem) {
+async function callAI(messages, members, visitors, attend, giving, prayers, mem, _sys?:string, prospects:any[] = []) {
   const AI_KEY = localStorage.getItem("ntcc_ai_api_key") || "";
   if (!AI_KEY) throw new Error("No API key");
   const systemPrompt = typeof messages === "string"
     ? "You are NTCC AI, a helpful church assistant for Pastor Hall."
-    : buildSys(members, visitors, attend, giving, prayers, mem);
+    : buildSys(members, visitors, attend, giving, prayers, mem, prospects);
   const msgList = typeof messages === "string"
     ? [{role:"user", content:messages}]
     : messages
@@ -11954,7 +11958,7 @@ function Prayer({prayers,setPrayers,members=[],visitors=[],portalMode=false,port
 }
 
 // ── AI ASSISTANT with ElevenLabs ──
-function AIAssist({aiChat,setAiChat,members,setMembers,visitors,setVisitors,attendance,setAttendance,giving,setGiving,prayers,setView,isMobile}) {
+function AIAssist({aiChat,setAiChat,members,setMembers,visitors,setVisitors,attendance,setAttendance,giving,setGiving,prayers,setView,isMobile,prospects=[]}:any) {
   const [input,setInput] = useState("");
   const [load,setLoad] = useState(false);
   const [ttsOn,setTtsOn] = useState(()=>localStorage.getItem("ntcc_voice_on")!=="false");
@@ -11980,6 +11984,8 @@ function AIAssist({aiChat,setAiChat,members,setMembers,visitors,setVisitors,atte
   const vRef = useRef(visitors);
   const aRef = useRef(attendance);
   const gRef = useRef(giving);
+  const pRef = useRef(prospects);
+  useEffect(()=>{pRef.current=prospects;},[prospects]);
   useEffect(()=>{mRef.current=members;},[members]);
   useEffect(()=>{vRef.current=visitors;},[visitors]);
   useEffect(()=>{aRef.current=attendance;},[attendance]);
@@ -12056,7 +12062,7 @@ function AIAssist({aiChat,setAiChat,members,setMembers,visitors,setVisitors,atte
     setAiChat(nc);
     setLoad(true);
     try {
-      const raw = await callAI(nc, mRef.current, vRef.current, aRef.current, gRef.current, prayers, mem);
+      const raw = await callAI(nc, mRef.current, vRef.current, aRef.current, gRef.current, prayers, mem, undefined, pRef.current);
       const {clean,action} = parseAction(raw);
       setAiChat([...nc,{role:"assistant",content:clean}]);
       if(action) execAction(action); else updateMem(null);
@@ -16098,7 +16104,7 @@ export default function App({churchId,churchName,adminFirst,adminLast,onSignOut,
           {!isMemberPortal && view==="sms" && <SmsCenter smsLog={smsLog} setSmsLog={setSmsLog} smsTemplates={smsTemplates} setSmsTemplates={setSmsTemplates} smsConfig={smsConfig} setSmsConfig={setSmsConfig} members={members} visitors={visitors} cs={churchSettings} onCompose={()=>openSmsComposer({})} onBulkCompose={()=>openBulkSmsComposer({recipients:[...members,...visitors].filter(p=>p.phone).map(p=>({...p,first:p.first,last:p.last,name:p.first+" "+p.last}))})}/>}
           {!isMemberPortal && view==="email" && <EmailCenter emailLog={emailLog} setEmailLog={setEmailLog} emailTemplates={emailTemplates} setEmailTemplates={setEmailTemplates} emailConfig={emailConfig} setEmailConfig={setEmailConfig} members={members} visitors={visitors} cs={churchSettings} onCompose={()=>openEmailComposer({})} onBulkCompose={()=>openBulkEmailComposer({recipients:members.filter(m=>m.email).map(m=>({name:m.first+" "+m.last,first:m.first,last:m.last,email:m.email}))})}/>}
           {!isMemberPortal && view==="access" && <Access members={members} users={users} setUsers={setUsers} roles={roles} setRoles={setRoles} permissions={permissions} setPermissions={setPermissions} portalMembers={portalMembers} setPortalMembers={setPortalMembers} currentUser={currentUser} churchId={churchId}/>}
-          {!isMemberPortal && view==="ai" && <AIAssist aiChat={aiChat} setAiChat={setAiChat} members={members} setMembers={setMembers} visitors={visitors} setVisitors={setVisitors} attendance={attendance} setAttendance={setAttendance} giving={giving} setGiving={setGiving} prayers={prayers} setView={setView} isMobile={isMobile}/>}
+          {!isMemberPortal && view==="ai" && <AIAssist aiChat={aiChat} setAiChat={setAiChat} members={members} setMembers={setMembers} visitors={visitors} setVisitors={setVisitors} attendance={attendance} setAttendance={setAttendance} giving={giving} setGiving={setGiving} prayers={prayers} setView={setView} isMobile={isMobile} prospects={prospects}/>}
           {!isMemberPortal && view==="alerts" && <AlertPage members={members} visitors={visitors} giving={giving} checkIns={checkIns} kidsCheckIns={kidsCheckIns} children={children} visitRecords={visitRecords}/>}
           {!isMemberPortal && view==="manual" && <ManualPage/>}
         </div>
